@@ -1,0 +1,10 @@
+agent-framework-core>=1.19.0
+agent-framework-openai>=1.14.0
+microsoft-agents-hosting-fastapi>=1.7.0
+microsoft-agents-authentication-msal>=1.7.0
+azure-search-documents>=11.5.1
+azure-identity>=1.19.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.1
