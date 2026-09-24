@@ -34,15 +34,19 @@ jobs:
           tenant-id: ${{ secrets.CAITRONEKG_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.CAITRONEKG_AZURE_SUBSCRIPTION_ID }}
 
-      # Builds on ACR Tasks, so no Docker or registry password on the runner.
-      # Tagging with the commit SHA keeps each deploy on a distinct digest --
-      # reusing a tag leaves the revision pinned to the cached image.
-      - name: Build image in ACR
+      # Built on the runner rather than with `az acr build`: ACR Tasks is not permitted on
+      # this subscription (TasksOperationsNotAllowed), and that is a platform restriction no
+      # role assignment changes. `az acr login` authenticates Docker as the OIDC identity,
+      # so there is still no registry password involved.
+      #
+      # Tagging with the commit SHA keeps each deploy on a distinct digest -- reusing a tag
+      # leaves the revision pinned to the cached image.
+      - name: Build and push image
         run: |
-          az acr build \
-            --registry ${{ env.ACR_NAME }} \
-            --image ${{ env.APP_NAME }}:${{ github.sha }} \
-            .
+          IMAGE=${{ env.ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
+          az acr login --name ${{ env.ACR_NAME }}
+          docker build --platform linux/amd64 -t "$IMAGE" .
+          docker push "$IMAGE"
 
       - name: Deploy to Container Apps
         run: |

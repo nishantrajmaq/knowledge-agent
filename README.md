@@ -119,15 +119,23 @@ many times over. Private endpoints are `Premium`-only, so the VNet-integrated to
 Premium. Upgrading is in-place (`az acr update -n $ACR --sku Premium`); no recreate, no
 re-push, so start on Basic.
 
-### 2. Build the image in Azure
+### 2. Build and push the image
+
+> **ACR Tasks is not available on this subscription.** `az acr build` fails with
+> `TasksOperationsNotAllowed` — a platform restriction on the subscription type, not something
+> RBAC can grant. Build locally with Docker, or let the GitHub Actions workflow build it on a
+> runner (see [CI/CD from GitHub](#cicd-from-github)).
 
 ```bash
 cd knowledge-agent
-az acr build --registry $ACR --image $APP:$TAG .
+az acr login --name $ACR
+docker build --platform linux/amd64 -t $ACR.azurecr.io/$APP:$TAG .
+docker push $ACR.azurecr.io/$APP:$TAG
 ```
 
-This uploads the build context, runs the `Dockerfile` on ACR Tasks, and pushes the result.
-`.dockerignore` keeps `.env` out of the context — verify that before the first build.
+`az acr login` authenticates Docker as your Azure identity, so no registry password is needed
+— you need `AcrPush` on the registry. `.dockerignore` keeps `.env` out of the image; verify
+that before the first build.
 
 ### 3. Create the container app
 
@@ -261,11 +269,16 @@ endpoint — a private-endpoint-only ACR will not work for image pulls on those 
 Use the Foundry Dockerfile, not the Container Apps one:
 
 ```bash
-az acr build --registry $ACR --image knowledge-agent-foundry:v1 -f Dockerfile.foundry .
+az acr login --name $ACR
+docker build --platform linux/amd64 -f Dockerfile.foundry \
+  -t $ACR.azurecr.io/knowledge-agent-foundry:v1 .
+docker push $ACR.azurecr.io/knowledge-agent-foundry:v1
 ```
 
-The platform requires **linux/amd64**. `az acr build` produces that already; if you ever build
-locally on ARM, pass `docker build --platform linux/amd64`.
+`--platform linux/amd64` is required — the hosting platform rejects ARM images, and a build on
+Apple Silicon produces one by default.
+
+(ACR Tasks is blocked on this subscription, so `az acr build` is not an option here either.)
 
 ### 3. Create the agent version
 
