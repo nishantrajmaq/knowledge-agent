@@ -95,7 +95,8 @@ docker run -p 8000:8000 --env-file .env knowledge-agent
 
 ## Deploy to Azure Container Apps via ACR
 
-No local Docker required — `az acr build` builds the image inside Azure.
+Images are built with Docker and pushed to ACR. The GitHub Actions workflow does this on a
+runner, so a local Docker install is only needed for manual builds.
 
 ### 0. Variables
 
@@ -114,10 +115,9 @@ az acr create -g $RG -n $ACR --sku Basic      # testing
 az acr create -g $RG -n $ACR --sku Premium    # production (private endpoints)
 ```
 
-`Basic` is enough for testing — `az acr build` works on every SKU and 10 GiB holds this image
-many times over. Private endpoints are `Premium`-only, so the VNet-integrated topology needs
-Premium. Upgrading is in-place (`az acr update -n $ACR --sku Premium`); no recreate, no
-re-push, so start on Basic.
+`Basic` is enough for testing — 10 GiB holds this image many times over. Private endpoints
+are `Premium`-only, so the VNet-integrated topology needs Premium. Upgrading is in-place
+(`az acr update -n $ACR --sku Premium`); no recreate, no re-push, so start on Basic.
 
 ### 2. Build and push the image
 
@@ -225,7 +225,8 @@ Gateway frontend or a jumpbox instead.
 ### 6. Redeploy after code changes
 
 ```bash
-az acr build --registry $ACR --image $APP:v2 .
+docker build --platform linux/amd64 -t $ACR.azurecr.io/$APP:v2 .
+docker push $ACR.azurecr.io/$APP:v2
 az containerapp update -n $APP -g $RG --image $ACR.azurecr.io/$APP:v2
 ```
 
@@ -403,8 +404,8 @@ az acr update -n $ACR --admin-enabled false
 ```
 
 Then delete the now-unused `CAITRONEKG_REGISTRY_USERNAME` and `CAITRONEKG_REGISTRY_PASSWORD`
-repo secrets. `az acr build` authenticates as the workflow identity via `AcrPush`, so the
-registry needs no admin user at all.
+repo secrets. `az acr login` authenticates Docker as the workflow identity, which needs only
+`AcrPush`, so the registry needs no admin user at all.
 
 ### What the workflow does not do
 
