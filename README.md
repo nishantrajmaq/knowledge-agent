@@ -224,6 +224,69 @@ az containerapp update -n $APP -g $RG --image $ACR.azurecr.io/$APP:v2
 Use a new tag each time. Re-pushing `:v1` leaves the running revision on the cached digest, so
 the deploy silently does nothing.
 
+## CI/CD from GitHub
+
+`.github/workflows/deploy.yml` builds in ACR and updates the container app on every push to
+`main`. It authenticates with **OIDC**, so there is no client secret stored in GitHub.
+
+### 1. Register the workflow identity
+
+```bash
+REPO=<owner>/<repo>            # e.g. itron/knowledge-agent
+APP_ID=$(az ad app create --display-name "gh-$APP" --query appId -o tsv)
+az ad sp create --id $APP_ID
+
+az ad app federated-credential create --id $APP_ID --parameters "{
+  \"name\": \"gh-main\",
+  \"issuer\": \"https://token.actions.githubusercontent.com\",
+  \"subject\": \"repo:$REPO:ref:refs/heads/main\",
+  \"audiences\": [\"api://AzureADTokenExchange\"]
+}"
+```
+
+The `subject` pins the credential to one repo and branch. A workflow on any other branch — or
+in a fork — cannot use it.
+
+### 2. Grant least-privilege roles
+
+```bash
+az role assignment create --assignee $APP_ID --role AcrPush \
+  --scope $(az acr show -n $ACR --query id -o tsv)
+
+az role assignment create --assignee $APP_ID --role Contributor \
+  --scope $(az containerapp show -n $APP -g $RG --query id -o tsv)
+```
+
+Scope Contributor to the container app, not the resource group — the workflow only needs to
+swap an image tag.
+
+### 3. Configure the repo
+
+Secrets (**Settings → Secrets and variables → Actions → Secrets**):
+
+| Secret | Value |
+|---|---|
+| `AZURE_CLIENT_ID` | `$APP_ID` |
+| `AZURE_TENANT_ID` | your tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | your subscription ID |
+
+Variables (same page, **Variables** tab):
+
+| Variable | Value |
+|---|---|
+| `ACR_NAME` | `$ACR` |
+| `APP_NAME` | `$APP` |
+| `RESOURCE_GROUP` | `$RG` |
+
+None of these are secrets in the real sense — the client ID and resource names are not
+credentials, and OIDC means there is no password to leak.
+
+### What the workflow does not do
+
+It updates the **image only**. Secrets and environment variables stay managed through `az`, so
+a deploy can never overwrite your configuration or print a key into the build log. Change
+config with `az containerapp secret set` / `--set-env-vars` as in step 4.
+
 ## Notes / next steps
 
 - Built against **agent-framework 1.19** (GA 1.x API: `Agent`, not the older preview

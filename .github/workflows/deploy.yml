@@ -1,0 +1,59 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# id-token is what lets azure/login use OIDC instead of a stored client secret.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Builds on ACR Tasks, so no Docker or registry password on the runner.
+      # Tagging with the commit SHA keeps each deploy on a distinct digest --
+      # reusing a tag leaves the revision pinned to the cached image.
+      - name: Build image in ACR
+        run: |
+          az acr build \
+            --registry ${{ vars.ACR_NAME }} \
+            --image ${{ vars.APP_NAME }}:${{ github.sha }} \
+            .
+
+      - name: Deploy to Container Apps
+        run: |
+          az extension add --name containerapp --upgrade --yes
+          az containerapp update \
+            --name ${{ vars.APP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/${{ vars.APP_NAME }}:${{ github.sha }}
+
+      - name: Verify revision is healthy
+        run: |
+          FQDN=$(az containerapp show -n ${{ vars.APP_NAME }} \
+            -g ${{ vars.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$FQDN/healthz" || true)
+            if [ "$code" = "200" ]; then echo "healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "new revision did not become healthy"
+          az containerapp logs show -n ${{ vars.APP_NAME }} -g ${{ vars.RESOURCE_GROUP }} --tail 50
+          exit 1
