@@ -1,0 +1,12 @@
+# Runtime dependencies for the Foundry hosted agent. Written into the zip as
+# requirements.txt, which is what remote_build installs from.
+#
+# Deliberately excludes the FastAPI/Agents-SDK stack: the Copilot bot endpoint is
+# served by the Container App, not by the hosted agent, so shipping it here would
+# only slow the remote build.
+agent-framework-core>=1.19.0
+agent-framework-foundry>=1.13.0
+agent-framework-foundry-hosting>=1.0.0b260918
+azure-search-documents>=11.5.1
+azure-identity>=1.19.0
+pydantic-settings>=2.6.0

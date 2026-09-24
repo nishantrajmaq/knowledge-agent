@@ -233,14 +233,19 @@ az containerapp update -n $APP -g $RG --image $ACR.azurecr.io/$APP:v2
 Use a new tag each time. Re-pushing `:v1` leaves the running revision on the cached digest, so
 the deploy silently does nothing.
 
-## Deploy as a Foundry hosted agent (via ACR)
+## Deploy as a Foundry hosted agent
 
-An alternative target to Container Apps. Foundry runs your container on managed
-infrastructure and gives it a **dedicated Entra identity**, so the model needs no API key.
+Foundry runs the agent on managed infrastructure and gives it a **dedicated Entra identity**,
+so the model needs no API key. The default path deploys from source — no registry, no Docker.
 
 `host.py` is the entrypoint: it serves the Responses protocol on port 8088 and passes
 `build_agent` as a *callable*, so the host builds one agent per request. `/readiness` comes
 from the protocol library — nothing to implement.
+
+It also sets `history_source="agent"`, which is required rather than preferred: the default
+(`"agent_server"`) accepts only a `RawAgent` and raises at startup otherwise. The consequence
+is that the platform does not replay conversation history — each turn receives only the
+current input, so multi-turn follow-ups need an explicit history provider on the agent.
 
 > **This path does not serve the M365 Copilot channel.** Hosted agents speak Responses /
 > Invocations, not the Bot Framework Activity protocol, so `app/main.py` and `app/bot.py` are
@@ -249,39 +254,26 @@ from the protocol library — nothing to implement.
 ### 1. Prerequisites
 
 - **Foundry Project Manager** role at project scope
-- Azure CLI 2.80+
-- Your Foundry project's system-assigned identity needs **Container Registry Repository
-  Reader** on the registry, or image pulls fail with `image_pull_failed`:
+- Azure CLI 2.80+, signed in to the tenant that owns the project
+- `azure-ai-projects>=2.2.0` (already in `requirements.txt`)
+
+That is the whole list for source deploy — no registry roles, because there is no registry.
+
+The container path (step 3) additionally needs the project's system-assigned identity to hold
+**Container Registry Repository Reader** on the registry, or pulls fail with
+`image_pull_failed`:
 
 ```bash
-PROJECT_MI=<project resource Identity -> Object (principal) ID, from the portal>
-
 az role assignment create \
-  --assignee $PROJECT_MI \
+  --assignee <project Identity -> Object (principal) ID> \
   --role "Container Registry Repository Reader" \
   --scope $(az acr show -n $ACR --query id -o tsv)
 ```
 
-Projects created **before 25 June 2026** require the registry to be reachable on its public
-endpoint — a private-endpoint-only ACR will not work for image pulls on those projects.
+Projects created **before 25 June 2026** also require that registry to be reachable on its
+public endpoint.
 
-### 2. Build the image
-
-Use the Foundry Dockerfile, not the Container Apps one:
-
-```bash
-az acr login --name $ACR
-docker build --platform linux/amd64 -f Dockerfile.foundry \
-  -t $ACR.azurecr.io/knowledge-agent-foundry:v1 .
-docker push $ACR.azurecr.io/knowledge-agent-foundry:v1
-```
-
-`--platform linux/amd64` is required — the hosting platform rejects ARM images, and a build on
-Apple Silicon produces one by default.
-
-(ACR Tasks is blocked on this subscription, so `az acr build` is not an option here either.)
-
-### 3. Create the agent version
+### 2. Deploy from source
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
@@ -290,11 +282,42 @@ export AZURE_SEARCH_ENDPOINT="https://<search>.search.windows.net"
 export AZURE_SEARCH_API_KEY="<key>"
 export AZURE_SEARCH_INDEX_NAME="<index>"
 
+python deploy_foundry.py
+```
+
+It packages the source, uploads it with its SHA-256, then polls until `active` or prints the
+version's `error` object. To inspect what would be sent without deploying:
+
+```bash
+python deploy_foundry.py --save-zip agent-code.zip
+```
+
+The zip is flat at the root (`host.py`, `requirements.txt`, `app/`) — the platform rejects a
+top-level wrapper folder. `requirements.txt` inside the zip comes from
+`requirements-foundry.txt`, which omits FastAPI and the Agents SDK, since the Copilot bot
+endpoint is served by the Container App rather than here. `app/main.py` and `app/bot.py` are
+excluded for the same reason, so nothing can import a module the slim requirements don't
+install.
+
+On a `remote_build` failure the container never starts, so `error.message` carries the pip
+error — log streaming won't show it. Max zip size is 250 MB.
+
+### 3. Or deploy a container image
+
+Only if you need control over the runtime image. ACR Tasks is blocked on this subscription, so
+build locally:
+
+```bash
+az acr login --name $ACR
+docker build --platform linux/amd64 -f Dockerfile.foundry \
+  -t $ACR.azurecr.io/knowledge-agent-foundry:v1 .
+docker push $ACR.azurecr.io/knowledge-agent-foundry:v1
+
 python deploy_foundry.py --image $ACR.azurecr.io/knowledge-agent-foundry:v1
 ```
 
-It creates the version, then polls until `active` (usually under a minute) or reports the
-`error` field on failure.
+`--platform linux/amd64` is required — the platform rejects ARM images, which is what a build
+on Apple Silicon produces by default.
 
 **Don't ship the search key as a literal.** Create a `CustomKeys` connection on the project and
 pass a placeholder instead — Foundry resolves it at sandbox start, and a GET on the version
