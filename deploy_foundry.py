@@ -115,12 +115,23 @@ def main() -> int:
     print(f"project: {project_endpoint}")
     print(f"model:   {model_deployment}")
 
-    # Passed to the container as-is. Values may be ${{connections.<name>.credentials.key}}
-    # placeholders, which Foundry resolves at session start so no key is stored here.
+    # Prefer a connection placeholder over the literal key. Foundry resolves it at session
+    # start, so the secret is never stored on the agent version -- while .env keeps the real
+    # key for local runs, where there is nothing to resolve a placeholder.
+    #
+    #   AZURE_SEARCH_API_KEY_REF=${{connections.<connection-name>.credentials.key}}
+    #
+    # Run check_foundry.py to list the project's connections and print this value.
+    search_key = os.environ.get("AZURE_SEARCH_API_KEY_REF") or os.environ["AZURE_SEARCH_API_KEY"]
+    if search_key.startswith("${{"):
+        print(f"search key: {search_key} (resolved by Foundry at session start)")
+    else:
+        print("search key: literal value from .env -- prefer AZURE_SEARCH_API_KEY_REF")
+
     env_vars = {
         "MODEL_DEPLOYMENT_NAME": model_deployment,
         "AZURE_SEARCH_ENDPOINT": os.environ["AZURE_SEARCH_ENDPOINT"],
-        "AZURE_SEARCH_API_KEY": os.environ["AZURE_SEARCH_API_KEY"],
+        "AZURE_SEARCH_API_KEY": search_key,
         "AZURE_SEARCH_INDEX_NAME": os.environ["AZURE_SEARCH_INDEX_NAME"],
         "AZURE_SEARCH_CONTENT_FIELD": os.environ.get("AZURE_SEARCH_CONTENT_FIELD", "snippet"),
         "AZURE_SEARCH_SOURCE_FIELD": os.environ.get("AZURE_SEARCH_SOURCE_FIELD", "blob_url"),
