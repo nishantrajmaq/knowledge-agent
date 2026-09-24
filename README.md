@@ -93,50 +93,115 @@ docker build -t knowledge-agent .
 docker run -p 8000:8000 --env-file .env knowledge-agent
 ```
 
-## Deploy to Azure Container Apps (agent testing, no bot service)
+## Deploy to Azure Container Apps via ACR
 
-No local Docker needed — `az acr build` builds in Azure:
+No local Docker required — `az acr build` builds the image inside Azure.
+
+### 0. Variables
 
 ```bash
-RG=<your-rg>; ACR=<your-acr>; APP=knowledge-agent; ENV=<your-containerapp-env>
-KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
-
-az acr build --registry $ACR --image $APP:v1 .
-
-az containerapp create \
-  --name $APP --resource-group $RG --environment $ENV \
-  --image $ACR.azurecr.io/$APP:v1 \
-  --target-port 8000 --ingress external --min-replicas 1 \
-  --registry-server $ACR.azurecr.io \
-  --secrets openai-key=<model-key> search-key=<search-key> chat-key=$KEY \
-  --env-vars \
-    AZURE_OPENAI_ENDPOINT=<endpoint> \
-    AZURE_OPENAI_API_KEY=secretref:openai-key \
-    AZURE_OPENAI_DEPLOYMENT_NAME=<deployment> \
-    AZURE_SEARCH_ENDPOINT=<search-endpoint> \
-    AZURE_SEARCH_API_KEY=secretref:search-key \
-    AZURE_SEARCH_INDEX_NAME=<index> \
-    AZURE_SEARCH_CONTENT_FIELD=snippet \
-    AZURE_SEARCH_SOURCE_FIELD=blob_url \
-    ENABLE_DEBUG_CHAT_ENDPOINT=true \
-    DEBUG_CHAT_API_KEY=secretref:chat-key
-
-echo "your test key: $KEY"
+RG=rg-itron-ekg-search
+ENV=cae-itron-ekg
+APP=ca-itron-ekg
+ACR=acritronekg          # registry name: alphanumeric only, globally unique
+TAG=v1
 ```
 
-Test it:
+### 1. Create the registry (once)
 
 ```bash
-FQDN=$(az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv)
-curl -X POST "https://$FQDN/chat" -H "Content-Type: application/json" \
-  -H "X-API-Key: $KEY" -d '{"message":"..."}'
+az acr create -g $RG -n $ACR --sku Premium
+```
+
+`Premium` is required for private endpoints. Drop to `Basic` only if this registry will stay
+publicly reachable.
+
+### 2. Build the image in Azure
+
+```bash
+cd knowledge-agent
+az acr build --registry $ACR --image $APP:$TAG .
+```
+
+This uploads the build context, runs the `Dockerfile` on ACR Tasks, and pushes the result.
+`.dockerignore` keeps `.env` out of the context — verify that before the first build.
+
+### 3. Create the container app
+
+Pull with a managed identity rather than registry admin credentials, so there is no registry
+password to store or rotate:
+
+```bash
+az containerapp create \
+  --name $APP --resource-group $RG --environment $ENV \
+  --image $ACR.azurecr.io/$APP:$TAG \
+  --system-assigned \
+  --target-port 8000 --ingress internal --min-replicas 1
+
+PRINCIPAL=$(az containerapp show -n $APP -g $RG --query identity.principalId -o tsv)
+ACR_ID=$(az acr show -n $ACR --query id -o tsv)
+
+az role assignment create \
+  --assignee $PRINCIPAL --role AcrPull --scope $ACR_ID
+
+az containerapp registry set \
+  -n $APP -g $RG --server $ACR.azurecr.io --identity system
+```
+
+**Ingress:** use `internal` when Application Gateway fronts the app (the VNet-integrated
+topology). Use `external` only for standalone testing — Azure Bot Service reaches the app
+through the gateway's public frontend, not directly.
+
+### 4. Configure secrets and environment
+
+Secrets first, then reference them — never put a key directly in `--env-vars`, where it is
+readable from the app's configuration:
+
+```bash
+az containerapp secret set -n $APP -g $RG --secrets \
+  openai-key=<model-key> \
+  search-key=<search-key> \
+  bot-client-secret=<bot-secret>
+
+az containerapp update -n $APP -g $RG --set-env-vars \
+  AZURE_OPENAI_ENDPOINT=<foundry-project-endpoint> \
+  AZURE_OPENAI_API_KEY=secretref:openai-key \
+  AZURE_OPENAI_DEPLOYMENT_NAME=<deployment> \
+  AZURE_SEARCH_ENDPOINT=<search-endpoint> \
+  AZURE_SEARCH_API_KEY=secretref:search-key \
+  AZURE_SEARCH_INDEX_NAME=<index> \
+  AZURE_SEARCH_CONTENT_FIELD=snippet \
+  AZURE_SEARCH_SOURCE_FIELD=blob_url \
+  CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=<bot-app-id> \
+  CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=secretref:bot-client-secret \
+  CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=<tenant-id> \
+  ENABLE_DEBUG_CHAT_ENDPOINT=false
 ```
 
 `--min-replicas 1` matters: conversation state uses `MemoryStorage`, which is per-replica and
-lost on scale-to-zero. Swap it for Blob/Cosmos storage before scaling out.
+lost on scale-to-zero. Move it to Cosmos before scaling out.
 
-When you later add the bot, set the three `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars
-and set `ENABLE_DEBUG_CHAT_ENDPOINT=false`.
+### 5. Verify
+
+```bash
+az containerapp logs show -n $APP -g $RG --follow
+```
+
+Look for `/api/messages` being registered. If you instead see *"Bot credentials not
+configured"*, the three `CONNECTIONS__*` variables did not land.
+
+With `internal` ingress the FQDN resolves only inside the VNet, so test from the Application
+Gateway's public frontend or a jumpbox in the VNet — not from your laptop.
+
+### 6. Redeploy after code changes
+
+```bash
+az acr build --registry $ACR --image $APP:v2 .
+az containerapp update -n $APP -g $RG --image $ACR.azurecr.io/$APP:v2
+```
+
+Use a new tag each time. Re-pushing `:v1` leaves the running revision on the cached digest, so
+the deploy silently does nothing.
 
 ## Notes / next steps
 
@@ -150,6 +215,6 @@ and set `ENABLE_DEBUG_CHAT_ENDPOINT=false`.
   managed identity later: swap `api_key=...` for `credential=DefaultAzureCredential()` in
   `app/agent.py`, and swap `AzureKeyCredential(...)` for the same credential in
   `app/knowledge_tool.py` (`azure-identity` is already in `requirements.txt` for this).
-- Deploying to Azure Container Apps is not covered here — build the image, push it to a
-  registry (e.g. ACR), and create/update the Container App with your endpoints/keys as secrets
-  and env vars.
+- For the VNet-integrated topology, add private endpoints for ACR, Azure AI Search, and the
+  Foundry project, and confirm Application Gateway forwards the `Authorization` header
+  unmodified — stripping it makes every `/api/messages` request 401.
