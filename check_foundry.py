@@ -8,6 +8,7 @@ prints the exact ${{connections....}} placeholder to use for a connection's key.
 Reads FOUNDRY_PROJECT_ENDPOINT (or AZURE_OPENAI_ENDPOINT) from .env.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -45,21 +46,28 @@ def main() -> int:
     if not found_any:
         print("  (none — the knowledge source is not connected to this project)")
 
+    only = os.environ.get("CHECK_AGENT")  # limit output to one agent when set
+
     print("\n=== AGENTS ===")
     try:
         for agent in project.agents.list():
             agent_name = getattr(agent, "name", "?")
+            if only and agent_name != only:
+                continue
             print(f"  {agent_name}")
             for version in project.agents.list_versions(agent_name=agent_name):
-                vnum = version.get("version") if isinstance(version, dict) else version.version
-                status = version.get("status") if isinstance(version, dict) else version.status
-                print(f"    version {vnum}: {status}")
+                vnum = version.version
+                print(f"    version {vnum}: {version.status}")
                 detail = project.agents.get_version(agent_name=agent_name, agent_version=vnum)
-                definition = detail.get("definition", {}) if isinstance(detail, dict) else {}
-                env_vars = definition.get("environment_variables") or {}
-                print(f"      env: {sorted(env_vars) or '(none set)'}")
-                if isinstance(detail, dict) and detail.get("error"):
-                    print(f"      error: {detail['error']}")
+                # as_dict() gives the wire shape; reading typed attributes can silently
+                # miss fields whose names differ from the model's.
+                raw = detail.as_dict()
+                definition = raw.get("definition", {})
+                print(f"      env:      {json.dumps(definition.get('environment_variables') or {})}")
+                print(f"      code:     {json.dumps(definition.get('code_configuration') or {})}")
+                print(f"      identity: {json.dumps(raw.get('instance_identity') or {})}")
+                if raw.get("error"):
+                    print(f"      ERROR:    {json.dumps(raw['error'])}")
     except Exception as exc:  # noqa: BLE001 - surface whatever the service said
         print(f"  could not list agents: {type(exc).__name__}: {exc}")
 
