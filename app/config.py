@@ -4,10 +4,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Azure OpenAI / Azure AI Foundry model deployment (key auth)
-    azure_openai_endpoint: str
-    azure_openai_api_key: str
-    azure_openai_deployment_name: str
+    # Model access, resolved in one of two modes:
+    #
+    # Foundry hosted  - the platform injects FOUNDRY_PROJECT_ENDPOINT and gives the container
+    #                   a dedicated Entra identity, so no key is involved. Declare
+    #                   MODEL_DEPLOYMENT_NAME yourself on the agent version.
+    # Key auth        - local runs and Container Apps, using the three AZURE_OPENAI_* values.
+    #
+    # build_agent() picks the mode from whether foundry_project_endpoint is set.
+    foundry_project_endpoint: str | None = None
+    model_deployment_name: str | None = None
+
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_key: str | None = None
+    azure_openai_deployment_name: str | None = None
 
     # Azure AI Search index used as the knowledge base (key auth)
     azure_search_endpoint: str

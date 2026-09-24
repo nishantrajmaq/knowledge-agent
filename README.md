@@ -224,6 +224,102 @@ az containerapp update -n $APP -g $RG --image $ACR.azurecr.io/$APP:v2
 Use a new tag each time. Re-pushing `:v1` leaves the running revision on the cached digest, so
 the deploy silently does nothing.
 
+## Deploy as a Foundry hosted agent (via ACR)
+
+An alternative target to Container Apps. Foundry runs your container on managed
+infrastructure and gives it a **dedicated Entra identity**, so the model needs no API key.
+
+`host.py` is the entrypoint: it serves the Responses protocol on port 8088 and passes
+`build_agent` as a *callable*, so the host builds one agent per request. `/readiness` comes
+from the protocol library — nothing to implement.
+
+> **This path does not serve the M365 Copilot channel.** Hosted agents speak Responses /
+> Invocations, not the Bot Framework Activity protocol, so `app/main.py` and `app/bot.py` are
+> unused here. Copilot still needs a bot endpoint in front, which remains a Container App.
+
+### 1. Prerequisites
+
+- **Foundry Project Manager** role at project scope
+- Azure CLI 2.80+
+- Your Foundry project's system-assigned identity needs **Container Registry Repository
+  Reader** on the registry, or image pulls fail with `image_pull_failed`:
+
+```bash
+PROJECT_MI=<project resource Identity -> Object (principal) ID, from the portal>
+
+az role assignment create \
+  --assignee $PROJECT_MI \
+  --role "Container Registry Repository Reader" \
+  --scope $(az acr show -n $ACR --query id -o tsv)
+```
+
+Projects created **before 25 June 2026** require the registry to be reachable on its public
+endpoint — a private-endpoint-only ACR will not work for image pulls on those projects.
+
+### 2. Build the image
+
+Use the Foundry Dockerfile, not the Container Apps one:
+
+```bash
+az acr build --registry $ACR --image knowledge-agent-foundry:v1 -f Dockerfile.foundry .
+```
+
+The platform requires **linux/amd64**. `az acr build` produces that already; if you ever build
+locally on ARM, pass `docker build --platform linux/amd64`.
+
+### 3. Create the agent version
+
+```bash
+export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+export MODEL_DEPLOYMENT_NAME="gpt-5.2"
+export AZURE_SEARCH_ENDPOINT="https://<search>.search.windows.net"
+export AZURE_SEARCH_API_KEY="<key>"
+export AZURE_SEARCH_INDEX_NAME="<index>"
+
+python deploy_foundry.py --image $ACR.azurecr.io/knowledge-agent-foundry:v1
+```
+
+It creates the version, then polls until `active` (usually under a minute) or reports the
+`error` field on failure.
+
+**Don't ship the search key as a literal.** Create a `CustomKeys` connection on the project and
+pass a placeholder instead — Foundry resolves it at sandbox start, and a GET on the version
+returns the placeholder text rather than the secret:
+
+```bash
+export AZURE_SEARCH_API_KEY='${{connections.agent-secrets.credentials.search_key}}'
+```
+
+Create the connection *before* deploying; if it is missing at start, the placeholder resolves
+to an empty string rather than failing loudly.
+
+### 4. Invoke
+
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+project = AIProjectClient(endpoint=FOUNDRY_PROJECT_ENDPOINT, credential=DefaultAzureCredential())
+client = project.get_openai_client(agent_name="knowledge-agent")
+print(client.responses.create(input="What is the remote work policy?").output_text)
+```
+
+### 5. Update
+
+Each deploy is a new version — build a new tag and re-run `deploy_foundry.py`. Previous
+versions are retained, and the newest is active by default.
+
+### Local testing
+
+`host.py` runs standalone on port 8088. With `FOUNDRY_PROJECT_ENDPOINT` unset it falls back to
+key auth from `.env`, so you can exercise the protocol without a deployment:
+
+```bash
+python host.py
+curl -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" -d '{"input": "hello", "stream": false}'
+```
+
 ## CI/CD from GitHub
 
 `.github/workflows/deploy.yml` builds in ACR and updates the container app on every push to
