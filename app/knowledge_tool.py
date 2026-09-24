@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 from typing import Annotated
 
 from azure.core.credentials import AzureKeyCredential
@@ -10,11 +11,31 @@ from app.user_context import get_user_context
 
 logger = logging.getLogger(__name__)
 
-_search_client = SearchClient(
-    endpoint=settings.azure_search_endpoint,
-    index_name=settings.azure_search_index_name,
-    credential=AzureKeyCredential(settings.azure_search_api_key),
-)
+@lru_cache(maxsize=1)
+def _client() -> SearchClient:
+    """Built on first use, not at import.
+
+    A hosted agent whose module raises during import never starts, and the portal surfaces
+    that only as a network error with no session. Failing here instead turns a missing
+    setting into a message the model can relay.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("AZURE_SEARCH_ENDPOINT", settings.azure_search_endpoint),
+            ("AZURE_SEARCH_API_KEY", settings.azure_search_api_key),
+            ("AZURE_SEARCH_INDEX_NAME", settings.azure_search_index_name),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"knowledge base not configured; missing {', '.join(missing)}")
+
+    return SearchClient(
+        endpoint=settings.azure_search_endpoint,
+        index_name=settings.azure_search_index_name,
+        credential=AzureKeyCredential(settings.azure_search_api_key),
+    )
 
 
 def search_knowledge_base(
@@ -35,6 +56,12 @@ def search_knowledge_base(
             "x-ms-query-source-authorization": f"Bearer {user.token}"
         }
 
+    try:
+        client = _client()
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        return f"The knowledge base is unavailable: {exc}"
+
     content_field = settings.azure_search_content_field
     source_field = settings.azure_search_source_field
 
@@ -42,7 +69,7 @@ def search_knowledge_base(
     if source_field:
         select.append(source_field)
 
-    results = _search_client.search(
+    results = client.search(
         search_text=query,
         top=settings.azure_search_top_k,
         select=select,

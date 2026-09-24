@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,16 +14,25 @@ class Settings(BaseSettings):
     #
     # build_agent() picks the mode from whether foundry_project_endpoint is set.
     foundry_project_endpoint: str | None = None
-    model_deployment_name: str | None = None
+    # azd's generated azure.yaml uses AZURE_AI_MODEL_DEPLOYMENT_NAME; accept either spelling.
+    model_deployment_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MODEL_DEPLOYMENT_NAME", "AZURE_AI_MODEL_DEPLOYMENT_NAME"
+        ),
+    )
 
     azure_openai_endpoint: str | None = None
     azure_openai_api_key: str | None = None
     azure_openai_deployment_name: str | None = None
 
-    # Azure AI Search index used as the knowledge base (key auth)
-    azure_search_endpoint: str
-    azure_search_api_key: str
-    azure_search_index_name: str
+    # Azure AI Search index used as the knowledge base (key auth).
+    # Optional so a missing value cannot kill the process at import: on a hosted agent that
+    # reads as a dead container and an opaque network error in the portal. The tool reports
+    # what is missing instead.
+    azure_search_endpoint: str | None = None
+    azure_search_api_key: str | None = None
+    azure_search_index_name: str | None = None
     azure_search_content_field: str = "snippet"
     azure_search_source_field: str | None = "blob_url"
     azure_search_top_k: int = 5
