@@ -371,13 +371,10 @@ continuous-deployment setup already creates these, and the workflow reuses them 
 | `CAITRONEKG_AZURE_TENANT_ID` | tenant ID |
 | `CAITRONEKG_AZURE_SUBSCRIPTION_ID` | subscription ID |
 
-Variables (same page, **Variables** tab) — these you must add:
-
-| Variable | Value |
-|---|---|
-| `ACR_NAME` | `acritronekg` |
-| `APP_NAME` | `ca-itron-ekg` |
-| `RESOURCE_GROUP` | `rg-itron-ekg-search` |
+Resource names (`ACR_NAME`, `APP_NAME`, `RESOURCE_GROUP`) are set in the workflow's own `env:`
+block rather than as repo variables — they aren't secrets, and inlining them removes a setup
+step that silently produces empty strings if configured in the wrong place. Move them to
+`vars.*` only if you need different values per environment.
 
 None of these are secrets in the real sense — the client ID and resource names are not
 credentials, and OIDC means there is no password to leak.

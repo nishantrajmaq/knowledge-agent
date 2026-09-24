@@ -14,6 +14,13 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+# Resource names, not secrets — inlined so the workflow has no repo-variable setup step.
+# Move them to `vars.*` only if you need different values per environment.
+env:
+  ACR_NAME: acritronekg
+  APP_NAME: ca-itron-ekg
+  RESOURCE_GROUP: rg-itron-ekg-search
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -33,22 +40,22 @@ jobs:
       - name: Build image in ACR
         run: |
           az acr build \
-            --registry ${{ vars.ACR_NAME }} \
-            --image ${{ vars.APP_NAME }}:${{ github.sha }} \
+            --registry ${{ env.ACR_NAME }} \
+            --image ${{ env.APP_NAME }}:${{ github.sha }} \
             .
 
       - name: Deploy to Container Apps
         run: |
           az extension add --name containerapp --upgrade --yes
           az containerapp update \
-            --name ${{ vars.APP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
-            --image ${{ vars.ACR_NAME }}.azurecr.io/${{ vars.APP_NAME }}:${{ github.sha }}
+            --name ${{ env.APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
 
       - name: Verify revision is healthy
         run: |
-          FQDN=$(az containerapp show -n ${{ vars.APP_NAME }} \
-            -g ${{ vars.RESOURCE_GROUP }} \
+          FQDN=$(az containerapp show -n ${{ env.APP_NAME }} \
+            -g ${{ env.RESOURCE_GROUP }} \
             --query properties.configuration.ingress.fqdn -o tsv)
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' "https://$FQDN/healthz" || true)
@@ -56,5 +63,5 @@ jobs:
             sleep 5
           done
           echo "new revision did not become healthy"
-          az containerapp logs show -n ${{ vars.APP_NAME }} -g ${{ vars.RESOURCE_GROUP }} --tail 50
+          az containerapp logs show -n ${{ env.APP_NAME }} -g ${{ env.RESOURCE_GROUP }} --tail 50
           exit 1
