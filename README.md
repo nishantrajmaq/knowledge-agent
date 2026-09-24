@@ -276,12 +276,19 @@ public endpoint.
 ### 2. Deploy from source
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export MODEL_DEPLOYMENT_NAME="gpt-5.2"
-export AZURE_SEARCH_ENDPOINT="https://<search>.search.windows.net"
-export AZURE_SEARCH_API_KEY="<key>"
-export AZURE_SEARCH_INDEX_NAME="<index>"
+az login
+python deploy_foundry.py
+```
 
+Configuration comes from `.env` — nothing to export. The Foundry project endpoint and model
+default to `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_DEPLOYMENT_NAME`, since a project endpoint
+and its OpenAI-compatible chat endpoint are the same URL. Set `FOUNDRY_PROJECT_ENDPOINT` or
+`MODEL_DEPLOYMENT_NAME` only to override. The script prints both before deploying.
+
+To point at a different project for one run (PowerShell — `export` is bash and will not work):
+
+```powershell
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
 python deploy_foundry.py
 ```
 

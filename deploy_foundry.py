@@ -7,8 +7,7 @@ Pass --image to register a prebuilt container image instead.
     python deploy_foundry.py
     python deploy_foundry.py --image acritronekg.azurecr.io/knowledge-agent-foundry:v1
 
-Reads FOUNDRY_PROJECT_ENDPOINT, MODEL_DEPLOYMENT_NAME and the AZURE_SEARCH_* values from
-the environment.
+Configuration is read from .env, so there is nothing to export first.
 """
 
 import argparse
@@ -19,6 +18,8 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
@@ -79,6 +80,8 @@ def _definition(args, env_vars: dict[str, str]) -> HostedAgentDefinition:
 
 
 def main() -> int:
+    load_dotenv(ROOT / ".env")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", default="knowledge-agent")
     parser.add_argument("--image", help="Deploy this prebuilt image instead of source")
@@ -93,10 +96,29 @@ def main() -> int:
         print(f"wrote {args.save_zip}")
         return 0
 
+    # A Foundry project endpoint and its OpenAI-compatible chat endpoint are the same URL,
+    # so fall back to the AZURE_OPENAI_* values rather than requiring them twice in .env.
+    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or os.environ.get(
+        "AZURE_OPENAI_ENDPOINT", ""
+    )
+    model_deployment = os.environ.get("MODEL_DEPLOYMENT_NAME") or os.environ.get(
+        "AZURE_OPENAI_DEPLOYMENT_NAME", ""
+    )
+    if not project_endpoint or not model_deployment:
+        print(
+            "Set FOUNDRY_PROJECT_ENDPOINT and MODEL_DEPLOYMENT_NAME (or the AZURE_OPENAI_\n"
+            "equivalents) in .env or the environment.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"project: {project_endpoint}")
+    print(f"model:   {model_deployment}")
+
     # Passed to the container as-is. Values may be ${{connections.<name>.credentials.key}}
     # placeholders, which Foundry resolves at session start so no key is stored here.
     env_vars = {
-        "MODEL_DEPLOYMENT_NAME": os.environ["MODEL_DEPLOYMENT_NAME"],
+        "MODEL_DEPLOYMENT_NAME": model_deployment,
         "AZURE_SEARCH_ENDPOINT": os.environ["AZURE_SEARCH_ENDPOINT"],
         "AZURE_SEARCH_API_KEY": os.environ["AZURE_SEARCH_API_KEY"],
         "AZURE_SEARCH_INDEX_NAME": os.environ["AZURE_SEARCH_INDEX_NAME"],
@@ -105,8 +127,7 @@ def main() -> int:
     }
 
     project = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=project_endpoint, credential=DefaultAzureCredential()
     )
     definition = _definition(args, env_vars)
 
