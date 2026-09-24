@@ -2,7 +2,7 @@ name: Build and deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 # id-token is what lets azure/login use OIDC instead of a stored client secret.

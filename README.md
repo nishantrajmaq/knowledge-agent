@@ -227,25 +227,29 @@ the deploy silently does nothing.
 ## CI/CD from GitHub
 
 `.github/workflows/deploy.yml` builds in ACR and updates the container app on every push to
-`main`. It authenticates with **OIDC**, so there is no client secret stored in GitHub.
+`master`. It authenticates with **OIDC**, so there is no client secret stored in GitHub.
 
 ### 1. Register the workflow identity
 
+If you set up continuous deployment from the Azure portal, an app registration already exists —
+reuse its client ID (the portal stores it as `CAITRONEKG_AZURE_CLIENT_ID`) and skip to step 2.
+
 ```bash
-REPO=<owner>/<repo>            # e.g. itron/knowledge-agent
+REPO=nishantrajmaq/knowledge-agent
 APP_ID=$(az ad app create --display-name "gh-$APP" --query appId -o tsv)
 az ad sp create --id $APP_ID
 
 az ad app federated-credential create --id $APP_ID --parameters "{
-  \"name\": \"gh-main\",
+  \"name\": \"gh-master\",
   \"issuer\": \"https://token.actions.githubusercontent.com\",
-  \"subject\": \"repo:$REPO:ref:refs/heads/main\",
+  \"subject\": \"repo:$REPO:ref:refs/heads/master\",
   \"audiences\": [\"api://AzureADTokenExchange\"]
 }"
 ```
 
-The `subject` pins the credential to one repo and branch. A workflow on any other branch — or
-in a fork — cannot use it.
+The `subject` pins the credential to one repo and branch, so a workflow on any other branch — or
+in a fork — cannot use it. It must match your branch exactly: a credential issued for
+`refs/heads/main` will not authenticate a push to `master`.
 
 ### 2. Grant least-privilege roles
 
@@ -280,6 +284,20 @@ Variables (same page, **Variables** tab):
 
 None of these are secrets in the real sense — the client ID and resource names are not
 credentials, and OIDC means there is no password to leak.
+
+### 4. Clean up the portal-generated deployment
+
+If you previously enabled continuous deployment from the Azure portal, it created its own
+workflow that pushed with **registry admin credentials**. That workflow has been removed in
+favour of this one, so retire the credentials it used:
+
+```bash
+az acr update -n $ACR --admin-enabled false
+```
+
+Then delete the now-unused `CAITRONEKG_REGISTRY_USERNAME` and `CAITRONEKG_REGISTRY_PASSWORD`
+repo secrets. `az acr build` authenticates as the workflow identity via `AcrPush`, so the
+registry needs no admin user at all.
 
 ### What the workflow does not do
 
