@@ -266,21 +266,22 @@ swap an image tag.
 
 ### 3. Configure the repo
 
-Secrets (**Settings → Secrets and variables → Actions → Secrets**):
+Secrets (**Settings → Secrets and variables → Actions → Secrets**) — the portal's
+continuous-deployment setup already creates these, and the workflow reuses them as-is:
 
 | Secret | Value |
 |---|---|
-| `AZURE_CLIENT_ID` | `$APP_ID` |
-| `AZURE_TENANT_ID` | your tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | your subscription ID |
+| `CAITRONEKG_AZURE_CLIENT_ID` | workflow app registration client ID |
+| `CAITRONEKG_AZURE_TENANT_ID` | tenant ID |
+| `CAITRONEKG_AZURE_SUBSCRIPTION_ID` | subscription ID |
 
-Variables (same page, **Variables** tab):
+Variables (same page, **Variables** tab) — these you must add:
 
 | Variable | Value |
 |---|---|
-| `ACR_NAME` | `$ACR` |
-| `APP_NAME` | `$APP` |
-| `RESOURCE_GROUP` | `$RG` |
+| `ACR_NAME` | `acritronekg` |
+| `APP_NAME` | `ca-itron-ekg` |
+| `RESOURCE_GROUP` | `rg-itron-ekg-search` |
 
 None of these are secrets in the real sense — the client ID and resource names are not
 credentials, and OIDC means there is no password to leak.
