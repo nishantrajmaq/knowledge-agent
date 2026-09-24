@@ -110,11 +110,14 @@ TAG=v1
 ### 1. Create the registry (once)
 
 ```bash
-az acr create -g $RG -n $ACR --sku Premium
+az acr create -g $RG -n $ACR --sku Basic      # testing
+az acr create -g $RG -n $ACR --sku Premium    # production (private endpoints)
 ```
 
-`Premium` is required for private endpoints. Drop to `Basic` only if this registry will stay
-publicly reachable.
+`Basic` is enough for testing — `az acr build` works on every SKU and 10 GiB holds this image
+many times over. Private endpoints are `Premium`-only, so the VNet-integrated topology needs
+Premium. Upgrading is in-place (`az acr update -n $ACR --sku Premium`); no recreate, no
+re-push, so start on Basic.
 
 ### 2. Build the image in Azure
 
@@ -136,7 +139,7 @@ az containerapp create \
   --name $APP --resource-group $RG --environment $ENV \
   --image $ACR.azurecr.io/$APP:$TAG \
   --system-assigned \
-  --target-port 8000 --ingress internal --min-replicas 1
+  --target-port 8000 --ingress external --min-replicas 1
 
 PRINCIPAL=$(az containerapp show -n $APP -g $RG --query identity.principalId -o tsv)
 ACR_ID=$(az acr show -n $ACR --query id -o tsv)
@@ -148,9 +151,16 @@ az containerapp registry set \
   -n $APP -g $RG --server $ACR.azurecr.io --identity system
 ```
 
-**Ingress:** use `internal` when Application Gateway fronts the app (the VNet-integrated
-topology). Use `external` only for standalone testing — Azure Bot Service reaches the app
-through the gateway's public frontend, not directly.
+**Ingress:** `external` is correct for testing and for a bot with no gateway in front — Azure
+Bot Service calls in from the internet and cannot reach a private endpoint. Switch to
+`internal` only once Application Gateway is the public frontend:
+
+```bash
+az containerapp ingress enable -n $APP -g $RG --type internal --target-port 8000
+```
+
+External ingress is not a security gap here: `/api/messages` is protected by Bot Framework JWT
+validation, and `/chat` by its API key. The FQDN being public is expected.
 
 ### 4. Configure secrets and environment
 
@@ -190,8 +200,19 @@ az containerapp logs show -n $APP -g $RG --follow
 Look for `/api/messages` being registered. If you instead see *"Bot credentials not
 configured"*, the three `CONNECTIONS__*` variables did not land.
 
-With `internal` ingress the FQDN resolves only inside the VNet, so test from the Application
-Gateway's public frontend or a jumpbox in the VNet — not from your laptop.
+With `external` ingress you can test straight from your machine:
+
+```bash
+FQDN=$(az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv)
+curl https://$FQDN/healthz
+
+# only if ENABLE_DEBUG_CHAT_ENDPOINT=true
+curl -X POST https://$FQDN/chat -H "Content-Type: application/json" \
+  -H "X-API-Key: <your-key>" -d '{"message":"what is the remote work policy?"}'
+```
+
+Once ingress is `internal`, the FQDN resolves only inside the VNet — test from the Application
+Gateway frontend or a jumpbox instead.
 
 ### 6. Redeploy after code changes
 
