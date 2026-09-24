@@ -138,10 +138,14 @@ def main() -> int:
         payload = build_zip()
         digest = hashlib.sha256(payload).hexdigest()
         print(f"uploading source zip ({len(payload) / 1024:.1f} KiB, sha256 {digest[:12]}...)")
+        # The SDK reads the multipart filename off the stream's .name, and the service
+        # rejects anything not ending in .zip.
+        stream = io.BytesIO(payload)
+        stream.name = f"{args.name}.zip"
         created = project.agents.create_version_from_code(
             agent_name=args.name,
             definition=definition,
-            code=io.BytesIO(payload),
+            code=stream,
             code_zip_sha256=digest,
         )
 
