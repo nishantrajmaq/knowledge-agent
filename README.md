@@ -364,6 +364,65 @@ curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" -d '{"input": "hello", "stream": false}'
 ```
 
+## Per-user document access (ACL) on the Container App
+
+Foundry's own Teams/Copilot bridge sends no user token, and a hosted agent can't do the Entra
+sign-in itself, so per-user trimming runs on the Container App path (`app/main.py` +
+`app/bot.py`). The bot signs the user in with SSO, exchanges the token on-behalf-of for an
+Azure AI Search token, and `search_knowledge_base` sends it as
+`x-ms-query-source-authorization` (bare token, **no** `Bearer ` prefix). Search then returns only
+chunks whose `UserIds`/`GroupIds` match that user. Without a token the tool refuses.
+
+### 1. Index
+Use `ks-srch-indexedsharepoint-index` with every chunk carrying ACLs. After changing the data
+source to `indexerPermissionOptions: ["userIds","groupIds"]` and mapping
+`metadata_user_ids`/`metadata_group_ids` in the skillset projection, backfill with
+`POST /indexers/<name>/resync` (`{"options":["permissions"]}`) and run the indexer. Verify with an
+elevated read that no chunk is left without an ACL.
+
+### 2. Entra app registration (the bot)
+- Single-tenant app registration, with a client secret (or federated credential).
+- **Expose an API**: application ID URI `api://botid-<APP_ID>`, scope `access_as_user`;
+  pre-authorize the Teams and Microsoft 365 client apps so SSO is silent.
+- **API permissions** (delegated): *Azure Cognitive Search* → `user_impersonation`; grant admin consent.
+- Redirect URI `https://token.botframework.com/.auth/web/redirect` (platform: Web).
+
+### 3. Azure Bot
+- Create an Azure Bot (single tenant, same app ID) whose messaging endpoint is
+  `https://<container-app-fqdn>/api/messages`.
+- **Configuration → Add OAuth Connection Settings**: service provider *Azure Active Directory v2*,
+  client id/secret of the app above, token exchange URL `api://botid-<APP_ID>`, scopes
+  `api://botid-<APP_ID>/access_as_user`. Note the connection name (e.g. `search-sso`).
+- Enable the Microsoft Teams and Microsoft 365 Copilot channels.
+
+### 4. Container App settings
+```
+CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=<APP_ID>
+CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=secretref:bot-client-secret
+CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=<TENANT_ID>
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__AZUREBOTOAUTHCONNECTIONNAME=search-sso
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__OBOCONNECTIONNAME=SERVICE_CONNECTION
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__SCOPES=api://botid-<APP_ID>/access_as_user
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__TITLE=Sign in
+AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__TEXT=Sign in to search the knowledge base
+AZURE_SEARCH_ENFORCE_USER_ACL=true
+AZURE_SEARCH_ENDPOINT=https://<search>.search.windows.net
+AZURE_SEARCH_INDEX_NAME=ks-srch-indexedsharepoint-index
+FOUNDRY_PROJECT_ENDPOINT=...   MODEL_DEPLOYMENT_NAME=gpt-4.1-mini
+```
+The container's managed identity needs **Foundry User** on the Foundry resource (model calls) and
+**Search Index Data Reader** on the search service (the `Authorization` side of the search call).
+
+### 5. Teams / Copilot app package
+Manifest `bots[0].botId` = `<APP_ID>`, `webApplicationInfo` = `{ "id": "<APP_ID>", "resource":
+"api://botid-<APP_ID>" }`, and your Container App domain in `validDomains`. Upload the package,
+then have an admin approve it.
+
+### 6. Test
+Two users with different SharePoint access ask the same question: answers must differ. A user with
+no access gets "I don't know". Check Teams first, then Copilot (its SSO handshake and reply
+handling differ from Teams).
+
 ## CI/CD from GitHub
 
 `.github/workflows/deploy.yml` builds in ACR and updates the container app on every push to

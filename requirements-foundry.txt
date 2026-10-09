@@ -10,3 +10,4 @@ agent-framework-foundry-hosting>=1.0.0b260918
 azure-search-documents>=11.5.1
 azure-identity>=1.19.0
 pydantic-settings>=2.6.0
+requests>=2.32.0

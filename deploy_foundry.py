@@ -137,6 +137,12 @@ def main() -> int:
         "AZURE_SEARCH_SOURCE_FIELD": os.environ.get("AZURE_SEARCH_SOURCE_FIELD", "blob_url"),
     }
 
+    # AZURE_SEARCH_ENFORCE_USER_ACL=true makes every search use the caller's token, forwarded
+    # in the x-client-search-access-token header (see host.py), and refuse without one.
+    for optional in ("SHAREPOINT_LIBRARY_URL", "AZURE_SEARCH_ENFORCE_USER_ACL"):
+        if os.environ.get(optional):
+            env_vars[optional] = os.environ[optional]
+
     project = AIProjectClient(
         endpoint=project_endpoint, credential=DefaultAzureCredential()
     )

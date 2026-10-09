@@ -12,6 +12,7 @@ from microsoft_agents.hosting.core import (
 from microsoft_agents.hosting.fastapi import CloudAdapter
 
 from app.agent import build_agent
+from app.config import settings
 from app.user_context import UserContext, reset_user_context, set_user_context
 
 logger = logging.getLogger(__name__)
@@ -26,12 +27,20 @@ BOT_CONFIGURED = bool(
 )
 
 
-def _user_from_activity(context: TurnContext) -> UserContext:
-    """Identity claims asserted by the channel.
+# Name of the user-authorization handler. It is configured entirely from the environment:
+#   AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__AZUREBOTOAUTHCONNECTIONNAME
+#   AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__OBOCONNECTIONNAME
+#   AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__SEARCH__SETTINGS__SCOPES
+# The first is the Azure Bot OAuth connection that performs Teams/Copilot SSO; the second is the
+# MSAL connection (client id + secret) used for the on-behalf-of exchange. See README.
+AUTH_HANDLER = "SEARCH"
+SEARCH_SCOPE = "https://search.azure.com/.default"
 
-    These identify the user but do not authorize them. `token` stays None until an SSO
-    OAuth connection is configured; wire the OBO exchange here and populate it before
-    enabling azure_search_enforce_user_acl.
+
+def _user_from_activity(context: TurnContext, token: str | None) -> UserContext:
+    """Identity asserted by the channel, plus the user's Search token when signed in.
+
+    object_id/tenant_id/name identify the user but do not authorize them; only `token` does.
     """
     activity = context.activity
     channel_data = activity.channel_data or {}
@@ -40,8 +49,21 @@ def _user_from_activity(context: TurnContext) -> UserContext:
         object_id=getattr(activity.from_property, "aad_object_id", None),
         tenant_id=tenant.get("id"),
         name=getattr(activity.from_property, "name", None),
-        token=None,
+        token=token,
     )
+
+
+async def _search_token(agent_app, context: TurnContext) -> str | None:
+    """Exchange the signed-in user's SSO token (on-behalf-of) for an Azure AI Search token.
+
+    The SDK has already run the sign-in flow before this handler, because the route is
+    registered with auth_handlers. Returns None if the exchange yields nothing, in which case
+    the search tool refuses rather than searching without the user's identity.
+    """
+    response = await agent_app.auth.exchange_token(
+        context, scopes=[SEARCH_SCOPE], auth_handler_id=AUTH_HANDLER
+    )
+    return response.token if response and response.token else None
 
 
 def _build_agent_app():
@@ -57,10 +79,33 @@ def _build_agent_app():
         **AGENTS_CONFIG,
     )
 
-    @agent_app.activity(ActivityTypes.message)
+    # With ACL enforcement on, the SDK signs the user in (SSO, or a sign-in card) before the
+    # handler runs. Without it there is no auth handler and no user token is requested.
+    auth_handlers = [AUTH_HANDLER] if settings.azure_search_enforce_user_acl else None
+
+    @agent_app.activity(ActivityTypes.message, auth_handlers=auth_handlers)
     async def on_message(context: TurnContext, state: TurnState) -> None:
-        user = _user_from_activity(context)
-        logger.info("turn from user oid=%s tenant=%s", user.object_id, user.tenant_id)
+        token = None
+        if settings.azure_search_enforce_user_acl:
+            try:
+                token = await _search_token(agent_app, context)
+            except Exception:
+                logger.exception("on-behalf-of token exchange failed")
+            if token is None:
+                await context.send_activity(
+                    "I couldn't verify your access to the knowledge base. Please sign in "
+                    "when prompted, or try again in a moment."
+                )
+                return
+
+        user = _user_from_activity(context, token)
+        # Log only that a token is present, never the value.
+        logger.info(
+            "turn from user oid=%s tenant=%s token=%s",
+            user.object_id,
+            user.tenant_id,
+            "present" if token else "absent",
+        )
 
         reset_token = set_user_context(user)
         try:
