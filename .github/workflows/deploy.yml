@@ -51,6 +51,13 @@ jobs:
       - name: Deploy to Container Apps
         run: |
           az extension add --name containerapp --upgrade --yes
+          # The app pulls with its system-assigned identity (needs AcrPull on the registry),
+          # so no registry password is stored. Idempotent; must run before the image update.
+          az containerapp registry set \
+            --name ${{ env.APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server ${{ env.ACR_NAME }}.azurecr.io \
+            --identity system
           az containerapp update \
             --name ${{ env.APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
