@@ -31,7 +31,8 @@ jobs:
         with:
           client-id: ${{ secrets.CAEKGSEARCH_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.CAEKGSEARCH_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.CAEKGSEARCH_AZURE_SUBSCRIPTION_ID }}
+          # Not a secret; hardcoded because a stale secret pointed this at the wrong subscription.
+          subscription-id: 0d458623-34d8-4bd8-b6d6-cc36d2ec7a2f
 
       # Built on the runner rather than with `az acr build`: ACR Tasks is not permitted on
       # this subscription (TasksOperationsNotAllowed), and that is a platform restriction no
