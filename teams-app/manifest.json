@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.22",
+  "version": "1.0.2",
+  "id": "3f698523-206c-4a4d-9978-d7d86a5e1d4a",
+  "developer": {
+    "name": "MAQ Software",
+    "websiteUrl": "https://www.maqsoftware.com",
+    "privacyUrl": "https://www.maqsoftware.com",
+    "termsOfUseUrl": "https://www.maqsoftware.com"
+  },
+  "name": {
+    "short": "Knowledge Agent",
+    "full": "Knowledge Agent - SharePoint Knowledge Base"
+  },
+  "description": {
+    "short": "Ask questions about the knowledge base.",
+    "full": "Knowledge Agent answers questions using documents indexed from the SharePoint knowledge base and cites the source documents in each answer."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#0078D4",
+  "bots": [
+    {
+      "botId": "3f698523-206c-4a4d-9978-d7d86a5e1d4a",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupChat"],
+          "commands": [
+            {
+              "title": "Ask a question",
+              "description": "Ask anything about the knowledge base"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "copilotAgents": {
+    "customEngineAgents": [
+      {
+        "type": "bot",
+        "id": "3f698523-206c-4a4d-9978-d7d86a5e1d4a"
+      }
+    ]
+  },
+  "webApplicationInfo": {
+    "id": "3f698523-206c-4a4d-9978-d7d86a5e1d4a",
+    "resource": "api://botid-3f698523-206c-4a4d-9978-d7d86a5e1d4a"
+  },
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": [
+    "ca-ekg-search.happyglacier-1ab20bc4.eastus.azurecontainerapps.io"
+  ]
+}

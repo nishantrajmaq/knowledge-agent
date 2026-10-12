@@ -77,7 +77,6 @@ def _acl_search(query: str, select: list[str], user_token: str) -> list[dict]:
         f"{settings.azure_search_endpoint.rstrip('/')}/indexes/"
         f"{settings.azure_search_index_name}/docs/search"
     )
-    logger.info(f"User Token: {user_token}")
     response = requests.post(
         url,
         params={"api-version": settings.azure_search_api_version},
