@@ -16,9 +16,9 @@ concurrency:
 # Resource names, not secrets — inlined so the workflow has no repo-variable setup step.
 # Move them to `vars.*` only if you need different values per environment.
 env:
-  ACR_NAME: acritronekg
-  APP_NAME: ca-itron-ekg
-  RESOURCE_GROUP: rg-itron-ekg-search
+  ACR_NAME: acrekgseach
+  APP_NAME: ca-ekg-search
+  RESOURCE_GROUP: rg-ekg-agent-test
 
 jobs:
   build-and-deploy:
