@@ -29,9 +29,9 @@ jobs:
       # Reuses the OIDC secrets created by the portal's continuous-deployment setup.
       - uses: azure/login@v2
         with:
-          client-id: ${{ secrets.CAITRONEKG_AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.CAITRONEKG_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.CAITRONEKG_AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.CAEKGSEARCH_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.CAEKGSEARCH_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.CAEKGSEARCH_AZURE_SUBSCRIPTION_ID }}
 
       # Built on the runner rather than with `az acr build`: ACR Tasks is not permitted on
       # this subscription (TasksOperationsNotAllowed), and that is a platform restriction no
