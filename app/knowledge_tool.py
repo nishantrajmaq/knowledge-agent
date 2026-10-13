@@ -57,9 +57,13 @@ def _acl_search(query: str, select: list[str], user_token: str) -> list[dict]:
     Two tokens travel on one request: Authorization carries this service's own identity (the
     managed identity when hosted; it needs Search Index Data Reader), and
     x-ms-query-source-authorization carries the end user's token, which Search matches against
-    each chunk's UserIds/GroupIds. The user header takes the bare token -- a "Bearer " prefix
-    is rejected with BearerReadAccessTokenFailed. The SDK's stable api-version predates this
-    feature, hence REST with a preview version.
+    each chunk's UserIds/GroupIds. Only the second one trims results, so the service identity
+    never widens what the user can see -- and users need no role on the search service, which
+    matters because a data-plane role there would also expose the non-ACL copy of this index.
+
+    The user header takes the bare token -- a "Bearer " prefix is rejected with
+    BearerReadAccessTokenFailed. The SDK's stable api-version predates this feature, hence
+    REST with a preview version.
     """
     missing = [
         name
